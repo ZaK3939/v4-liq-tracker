@@ -1,0 +1,34 @@
+# Ignore build output
+build/
+dist/
+out/
+
+# Ignore node_modules
+node_modules/
+
+# Ignore various artifacts
+*.min.js
+*.min.css
+*.bundle.js
+coverage/
+
+# Ignore large files or generated files
+*.log
+*.lock
+package-lock.json
+yarn.lock
+
+# Ignore version control
+.git/
+.gitignore
+
+# Ignore VS Code settings
+.vscode/
+
+# Ignore other files you don't want to format
+*.md
+*.svg
+*.json
+
+# Ignore specific directories that might cause issues
+# Add your problematic directories here

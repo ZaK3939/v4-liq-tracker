@@ -1,8 +1,7 @@
-import { ApolloClient, InMemoryCache, HttpLink } from "@apollo/client";
+import { ApolloClient, InMemoryCache, HttpLink } from '@apollo/client';
 
 // Envioのインデクサーエンドポイントを指定
-const ENVIO_API_URL =
-  process.env.NEXT_PUBLIC_ENVIO_API_URL || "http://localhost:8080/v1/graphql";
+const ENVIO_API_URL = process.env.NEXT_PUBLIC_ENVIO_API_URL || 'http://localhost:8080/v1/graphql';
 
 const httpLink = new HttpLink({
   uri: ENVIO_API_URL,
@@ -30,10 +29,10 @@ export const client = new ApolloClient({
   }),
   defaultOptions: {
     watchQuery: {
-      fetchPolicy: "no-cache",
+      fetchPolicy: 'no-cache',
     },
     query: {
-      fetchPolicy: "no-cache",
+      fetchPolicy: 'no-cache',
     },
   },
 });

@@ -1,4 +1,4 @@
-import { gql } from "@apollo/client";
+import { gql } from '@apollo/client';
 
 export const GET_TOKEN_INFO = gql`
   query GetTokenInfo($tokenId: String!) {
@@ -20,11 +20,7 @@ export const GET_ALL_POOLS = gql`
     $orderBy: String = "totalValueLockedUSD"
     $orderDirection: String = "desc"
   ) {
-    Pool(
-      limit: $first
-      offset: $skip
-      order_by: { totalValueLockedUSD: desc }
-    ) {
+    Pool(limit: $first, offset: $skip, order_by: { totalValueLockedUSD: desc }) {
       id
       chainId
       name
@@ -51,11 +47,7 @@ export const GET_ALL_POOLS = gql`
 
 // 特定のプールの詳細を取得するクエリ
 export const GET_POOL_DETAILS = gql`
-  query GetPoolDetails(
-    $poolId: String!
-    $token0Id: String!
-    $token1Id: String!
-  ) {
+  query GetPoolDetails($poolId: String!, $token0Id: String!, $token1Id: String!) {
     Pool_by_pk(id: $poolId) {
       id
       chainId
@@ -100,11 +92,7 @@ export const GET_POOL_DETAILS = gql`
 
 // プールのスワップイベントを取得するクエリ
 export const GET_POOL_SWAP_EVENTS = gql`
-  query GetPoolSwapEvents(
-    $poolId: String!
-    $startTime: numeric!
-    $first: Int = 1000
-  ) {
+  query GetPoolSwapEvents($poolId: String!, $startTime: numeric!, $first: Int = 1000) {
     Swap(
       where: { pool: { _eq: $poolId }, timestamp: { _gte: $startTime } }
       order_by: { timestamp: desc }
@@ -161,11 +149,7 @@ export const GET_BUNDLE = gql`
 `;
 
 export const GET_POOL_LIQUIDITY_HISTORY = gql`
-  query GetPoolLiquidityHistory(
-    $poolId: String!
-    $startTime: numeric!
-    $first: Int = 1000
-  ) {
+  query GetPoolLiquidityHistory($poolId: String!, $startTime: numeric!, $first: Int = 1000) {
     liquidityEvents: Pool_liquidity_history(
       where: { pool: { _eq: $poolId }, timestamp: { _gte: $startTime } }
       order_by: { timestamp: asc }
@@ -208,11 +192,7 @@ export const GET_POOL_TICKS = gql`
 // 最近の流動性イベントを取得するクエリ
 export const GET_RECENT_MODIFY_LIQUIDITY_EVENTS = gql`
   query GetRecentModifyLiquidityEvents($poolId: String!, $first: Int!) {
-    ModifyLiquidity(
-      where: { pool: { _eq: $poolId } }
-      order_by: { timestamp: desc }
-      limit: $first
-    ) {
+    ModifyLiquidity(where: { pool: { _eq: $poolId } }, order_by: { timestamp: desc }, limit: $first) {
       id
       transaction
       timestamp
@@ -232,11 +212,7 @@ export const GET_RECENT_MODIFY_LIQUIDITY_EVENTS = gql`
 // 特定のユーザーの流動性ポジションを取得するクエリ
 export const GET_USER_LIQUIDITY_POSITIONS = gql`
   query GetUserLiquidityPositions($owner: String!, $first: Int!) {
-    LiquidityPosition(
-      where: { owner: { _eq: $owner } }
-      order_by: { createdAtTimestamp: desc }
-      limit: $first
-    ) {
+    LiquidityPosition(where: { owner: { _eq: $owner } }, order_by: { createdAtTimestamp: desc }, limit: $first) {
       id
       owner
       pool
@@ -258,11 +234,7 @@ export const GET_USER_LIQUIDITY_POSITIONS = gql`
 // プールの流動性ポジションを取得するクエリ
 export const GET_POOL_LIQUIDITY_POSITIONS = gql`
   query GetPoolLiquidityPositions($poolId: String!, $first: Int!) {
-    LiquidityPosition(
-      where: { pool: { _eq: $poolId } }
-      order_by: { liquidity: desc }
-      limit: $first
-    ) {
+    LiquidityPosition(where: { pool: { _eq: $poolId } }, order_by: { liquidity: desc }, limit: $first) {
       id
       owner
       pool

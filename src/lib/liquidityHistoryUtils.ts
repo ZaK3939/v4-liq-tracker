@@ -17,10 +17,10 @@ export function useLiquidityHistory(
 
     // 初期値を設定
     const initialLiquidity = poolDetails.liquidity ? BigInt(poolDetails.liquidity) : BigInt(0);
-    const initialTVL = parseFloat(poolDetails.totalValueLockedUSD || '0');
+    const initialTVL = 0;
     const initialToken0 = parseFloat(poolDetails.totalValueLockedToken0 || '0');
     const initialToken1 = parseFloat(poolDetails.totalValueLockedToken1 || '0');
-    const initialFees = parseFloat(poolDetails.feesUSD || '0');
+    const initialFees = 0;
 
     // 流動性イベントとスワップイベントをソート
     const sortedLiquidityEvents = liquidityEvents

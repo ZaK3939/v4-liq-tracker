@@ -90,12 +90,47 @@ export const GET_POOL_DETAILS = gql`
   }
 `;
 
-// プールのスワップイベントを取得するクエリ
+// 改良版: スワップイベントの取得 - 開始タイムスタンプのみ必須（エラー修正版）
 export const GET_POOL_SWAP_EVENTS = gql`
-  query GetPoolSwapEvents($poolId: String!, $startTime: numeric!, $first: Int = 1000) {
+  query GetPoolSwapEvents(
+    $poolId: String!
+    $startTime: numeric!
+    $endTime: numeric = null
+    $first: Int = 1000
+    $orderDirection: order_by = asc
+  ) {
     Swap(
       where: { pool: { _eq: $poolId }, timestamp: { _gte: $startTime } }
-      order_by: { timestamp: desc }
+      order_by: { timestamp: $orderDirection }
+      limit: $first
+    ) {
+      id
+      timestamp
+      transaction
+      sender
+      origin
+      amount0
+      amount1
+      amountUSD
+      sqrtPriceX96
+      tick
+      logIndex
+    }
+  }
+`;
+
+// endTimeがnullでない場合にのみ使用するクエリ
+export const GET_POOL_SWAP_EVENTS_WITH_END = gql`
+  query GetPoolSwapEventsWithEnd(
+    $poolId: String!
+    $startTime: numeric!
+    $endTime: numeric!
+    $first: Int = 1000
+    $orderDirection: order_by = desc
+  ) {
+    Swap(
+      where: { pool: { _eq: $poolId }, timestamp: { _gte: $startTime, _lte: $endTime } }
+      order_by: { timestamp: $orderDirection }
       limit: $first
     ) {
       id
@@ -149,7 +184,7 @@ export const GET_BUNDLE = gql`
 `;
 
 export const GET_POOL_LIQUIDITY_HISTORY = gql`
-  query GetPoolLiquidityHistory($poolId: String!, $startTime: numeric!, $first: Int = 1000) {
+  query GetPoolLiquidityHistory($poolId: String!, $startTime: numeric!, $first: Int = 10000) {
     liquidityEvents: Pool_liquidity_history(
       where: { pool: { _eq: $poolId }, timestamp: { _gte: $startTime } }
       order_by: { timestamp: asc }
@@ -209,6 +244,7 @@ export const GET_RECENT_MODIFY_LIQUIDITY_EVENTS = gql`
     }
   }
 `;
+
 // 特定のユーザーの流動性ポジションを取得するクエリ
 export const GET_USER_LIQUIDITY_POSITIONS = gql`
   query GetUserLiquidityPositions($owner: String!, $first: Int!) {
@@ -275,6 +311,78 @@ export const GET_ACTIVE_POOL_LIQUIDITY_POSITIONS = gql`
       collectedFeesToken1
       createdAtTimestamp
       createdAtBlockNumber
+    }
+  }
+`;
+
+// 特定の日付のスワップイベントを集計するクエリ - 開始時間のみ
+export const GET_DAILY_SWAP_AGGREGATES = gql`
+  query GetDailySwapAggregates($poolId: String!, $startTime: numeric!) {
+    daily_swaps: Swap_aggregate(where: { pool: { _eq: $poolId }, timestamp: { _gte: $startTime } }) {
+      aggregate {
+        sum {
+          amountUSD
+        }
+        count
+      }
+      nodes {
+        timestamp
+      }
+    }
+  }
+`;
+
+// 特定の日付範囲のスワップイベントを集計するクエリ
+export const GET_DAILY_SWAP_AGGREGATES_WITH_RANGE = gql`
+  query GetDailySwapAggregatesWithRange($poolId: String!, $startTime: numeric!, $endTime: numeric!) {
+    daily_swaps: Swap_aggregate(where: { pool: { _eq: $poolId }, timestamp: { _gte: $startTime, _lte: $endTime } }) {
+      aggregate {
+        sum {
+          amountUSD
+        }
+        count
+      }
+      nodes {
+        timestamp
+      }
+    }
+  }
+`;
+
+// 指定した日付範囲のフィー情報を直接取得するクエリ - 開始時間のみ
+export const GET_FEE_DATA_BY_DAYS = gql`
+  query GetFeeDataByDays($poolId: String!, $startTime: numeric!) {
+    Pool_day_data(where: { poolId: { _eq: $poolId }, date: { _gte: $startTime } }, order_by: { date: asc }) {
+      id
+      date
+      volumeUSD
+      feesUSD
+      txCount
+      tvlUSD
+      liquidity
+    }
+  }
+`;
+
+// カーソルベースのページネーション用スワップイベントクエリ
+export const GET_POOL_SWAP_EVENTS_WITH_CURSOR = gql`
+  query GetPoolSwapEventsWithCursor($poolId: String!, $startTime: numeric!, $first: Int = 1000, $cursor: Int = 0) {
+    Swap(
+      where: { pool: { _eq: $poolId }, timestamp: { _gte: $startTime }, id: { _gt: $cursor } }
+      order_by: { id: asc }
+      limit: $first
+    ) {
+      id
+      timestamp
+      transaction
+      sender
+      origin
+      amount0
+      amount1
+      amountUSD
+      sqrtPriceX96
+      tick
+      logIndex
     }
   }
 `;

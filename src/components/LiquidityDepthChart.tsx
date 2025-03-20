@@ -1,17 +1,8 @@
-import React, { useMemo } from "react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-} from "recharts";
-import { formatNumber } from "../lib/utils";
-import { calculateLiquidityDelta } from "../lib/liquidityMath";
-import { Tick } from "../types";
+import React, { useMemo } from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { formatNumber } from '../lib/utils';
+import { calculateLiquidityDelta } from '../lib/liquidityMath';
+import { Tick } from '../types';
 
 // GraphQLから取得するTickデータの型
 interface InputTickData {
@@ -35,7 +26,7 @@ interface ProcessedTickData {
   tickIdx: number;
   liquidityNet: number;
   liquidityGross: number;
-  liquidityActive?: number; // calculateLiquidityDeltaで追加される
+  liquidityActive: number;
   price0: number;
   price1: number;
   tickLabel: string;
@@ -52,6 +43,35 @@ interface LiquidityDepthProps {
   token1Symbol: string;
   tickSpacing: number;
   maxTicksToShow?: number;
+}
+
+// Basic tick data after initial normalization
+interface NormalizedTickData {
+  tickIdx: number;
+  liquidityNet: number;
+  liquidityGross: number;
+  price0: number;
+  price1: number;
+}
+
+// Extended tick data after processing with liquidity calculations
+interface CalculatedTickData extends NormalizedTickData {
+  liquidityActive?: number;
+  liquidityDelta?: number;
+}
+
+// Final tick data format for display
+interface FormattedTickData {
+  tickIdx: number;
+  positiveLiquidity: number;
+  negativeLiquidity: number;
+  liquidityGross: number;
+  liquidityActive: number;
+  price0: number;
+  price1: number;
+  tickLabel: string;
+  price0Label: string;
+  price1Label: string;
 }
 
 // ティックから価格を計算する関数
@@ -78,9 +98,9 @@ const LiquidityDepthChart: React.FC<LiquidityDepthProps> = ({
     // LiquidityPositionデータ形式の場合、ティックデータに変換
     return tickData.map((tick) => {
       // LiquidityPositionデータの場合
-      if ("tickLower" in tick && "tickUpper" in tick && "liquidity" in tick) {
+      if ('tickLower' in tick && 'tickUpper' in tick && 'liquidity' in tick) {
         const tickIdx = tick.tickLower;
-        const liquidity = tick.liquidity || "0";
+        const liquidity = tick.liquidity || '0';
         return {
           tickIdx: Number(tickIdx),
           liquidityNet: Number(liquidity), // 下限ティックでは流動性が追加
@@ -94,12 +114,8 @@ const LiquidityDepthChart: React.FC<LiquidityDepthProps> = ({
         tickIdx: Number(tick.tickIdx),
         liquidityNet: Number(tick.liquidityNet || 0),
         liquidityGross: Number(tick.liquidityGross || 0),
-        price0: Number(
-          tick.price0 || calculatePrice0FromTick(Number(tick.tickIdx)),
-        ),
-        price1: Number(
-          tick.price1 || calculatePrice1FromTick(Number(tick.tickIdx)),
-        ),
+        price0: Number(tick.price0 || calculatePrice0FromTick(Number(tick.tickIdx))),
+        price1: Number(tick.price1 || calculatePrice1FromTick(Number(tick.tickIdx))),
       };
     });
   }, [tickData]);
@@ -110,12 +126,12 @@ const LiquidityDepthChart: React.FC<LiquidityDepthProps> = ({
     if (!normalizedTickData || normalizedTickData.length === 0) return [];
 
     // 流動性ポジションから直接使用する場合、calculateLiquidityDeltaを省略
-    let processedTicks;
+    let processedTicks: CalculatedTickData[];
     try {
       // 流動性の計算を試みる
       processedTicks = calculateLiquidityDelta(normalizedTickData);
     } catch (error) {
-      console.error("liquidityDelta計算エラー:", error);
+      console.error('liquidityDelta計算エラー:', error);
       // エラーが発生した場合、生のデータを使用
       processedTicks = normalizedTickData;
     }
@@ -137,7 +153,7 @@ const LiquidityDepthChart: React.FC<LiquidityDepthProps> = ({
       tickLabel: `${tick.tickIdx}`,
       price0Label: `${token0Symbol}: ${Number(tick.price0).toFixed(6)}`,
       price1Label: `${token1Symbol}: ${Number(tick.price1).toFixed(6)}`,
-    })) as ProcessedTickData[];
+    })) as FormattedTickData[];
   }, [normalizedTickData, token0Symbol, token1Symbol]);
 
   // 現在のtickに最も近いtickを見つけるヘルパー関数
@@ -172,10 +188,7 @@ const LiquidityDepthChart: React.FC<LiquidityDepthProps> = ({
     // 表示範囲を計算
     const halfRange = Math.floor(maxTicksToShow / 2);
     const startIndex = Math.max(0, centerIndex - halfRange);
-    const endIndex = Math.min(
-      formattedData.length - 1,
-      centerIndex + halfRange,
-    );
+    const endIndex = Math.min(formattedData.length - 1, centerIndex + halfRange);
 
     return formattedData.slice(startIndex, endIndex + 1);
   }, [formattedData, closestTickIndex, maxTicksToShow]);
@@ -186,23 +199,19 @@ const LiquidityDepthChart: React.FC<LiquidityDepthProps> = ({
       const data = payload[0].payload;
 
       return (
-        <div className="bg-white p-3 border border-gray-200 shadow-md rounded">
-          <p className="font-bold mb-1">Tick: {data.tickIdx}</p>
-          <p className="text-sm">{data.price0Label}</p>
-          <p className="text-sm">{data.price1Label}</p>
-          <hr className="my-2" />
+        <div className='bg-white p-3 border border-gray-200 shadow-md rounded'>
+          <p className='font-bold mb-1'>Tick: {data.tickIdx}</p>
+          <p className='text-sm'>{data.price0Label}</p>
+          <p className='text-sm'>{data.price1Label}</p>
+          <hr className='my-2' />
           {payload.map((entry: any, index: number) => (
-            <p
-              key={`item-${index}`}
-              className="text-sm"
-              style={{ color: entry.color }}
-            >
-              <span className="font-medium">{entry.name}: </span>
+            <p key={`item-${index}`} className='text-sm' style={{ color: entry.color }}>
+              <span className='font-medium'>{entry.name}: </span>
               {formatNumber(entry.value)}
             </p>
           ))}
-          <p className="text-sm mt-1">
-            <span className="font-medium">現在の総流動性: </span>
+          <p className='text-sm mt-1'>
+            <span className='font-medium'>現在の総流動性: </span>
             {formatNumber(data.liquidityActive || 0)}
           </p>
         </div>
@@ -215,52 +224,43 @@ const LiquidityDepthChart: React.FC<LiquidityDepthProps> = ({
   // データが無い場合のメッセージ
   if (!visibleData.length) {
     return (
-      <div className="flex flex-col items-center justify-center h-80 bg-white rounded-lg p-4">
-        <p className="text-gray-500">このプールのTickデータはありません</p>
+      <div className='flex flex-col items-center justify-center h-80 bg-white rounded-lg p-4'>
+        <p className='text-gray-500'>このプールのTickデータはありません</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-lg shadow p-4">
-      <h2 className="text-xl font-semibold mb-4">流動性の厚さ（Tick分布）</h2>
-      <div className="h-80">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart
-            data={visibleData}
-            margin={{ top: 20, right: 30, left: 20, bottom: 40 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" />
+    <div className='bg-white rounded-lg shadow p-4'>
+      <h2 className='text-xl font-semibold mb-4'>流動性の厚さ（Tick分布）</h2>
+      <div className='h-80'>
+        <ResponsiveContainer width='100%' height='100%'>
+          <BarChart data={visibleData} margin={{ top: 20, right: 30, left: 20, bottom: 40 }}>
+            <CartesianGrid strokeDasharray='3 3' />
             <XAxis
-              dataKey="tickLabel"
+              dataKey='tickLabel'
               interval={Math.floor(visibleData.length / 10)}
               angle={-45}
-              textAnchor="end"
+              textAnchor='end'
               height={60}
             />
             <YAxis />
             <Tooltip content={<CustomTooltip />} />
             <ReferenceLine
               x={formattedData[closestTickIndex]?.tickLabel}
-              stroke="#DC2626"
+              stroke='#DC2626'
               strokeWidth={2}
-              label={{ value: "現在価格", position: "top", fill: "#DC2626" }}
+              label={{ value: '現在価格', position: 'top', fill: '#DC2626' }}
             />
-            <Bar dataKey="positiveLiquidity" name="流動性追加" fill="#3B82F6" />
-            <Bar dataKey="negativeLiquidity" name="流動性削除" fill="#EF4444" />
+            <Bar dataKey='positiveLiquidity' name='流動性追加' fill='#3B82F6' />
+            <Bar dataKey='negativeLiquidity' name='流動性削除' fill='#EF4444' />
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <div className="mt-4 text-sm text-gray-500">
-        <p>
-          *
-          各バーはTickごとの流動性の変化を示します。青は正味の流動性追加、赤は正味の流動性削減を表します。
-        </p>
+      <div className='mt-4 text-sm text-gray-500'>
+        <p>* 各バーはTickごとの流動性の変化を示します。青は正味の流動性追加、赤は正味の流動性削減を表します。</p>
         <p>* 赤い垂直線は現在の価格（アクティブなTick）を示します。</p>
-        <p>
-          *
-          プール内の流動性はTick境界に集中する傾向があり、これによって価格範囲ごとの流動性の厚さが異なります。
-        </p>
+        <p>* プール内の流動性はTick境界に集中する傾向があり、これによって価格範囲ごとの流動性の厚さが異なります。</p>
       </div>
     </div>
   );

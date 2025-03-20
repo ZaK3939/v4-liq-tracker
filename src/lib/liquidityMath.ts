@@ -1,4 +1,4 @@
-import { BigNumber } from "ethers";
+import { BigNumber } from 'ethers';
 
 // 数値型に変換済みのTickデータの型定義
 interface NormalizedTickData {
@@ -99,9 +99,7 @@ export function getAmount1(
 }
 
 // 流動性の厚さを計算
-export function calculateLiquidityDelta(
-  ticks: NormalizedTickData[],
-): ProcessedTickData[] {
+export function calculateLiquidityDelta(ticks: NormalizedTickData[]): ProcessedTickData[] {
   if (!ticks || ticks.length === 0) return [];
 
   // Tick Indexでソート
@@ -128,17 +126,11 @@ export function calculateLiquidityDelta(
 }
 
 // 指定されたTick範囲内での合計流動性を計算
-export function calculateRangeLiquidity(
-  ticks: NormalizedTickData[],
-  tickLower: number,
-  tickUpper: number,
-): number {
+export function calculateRangeLiquidity(ticks: NormalizedTickData[], tickLower: number, tickUpper: number): number {
   if (!ticks || ticks.length === 0) return 0;
 
   // 特定のTick範囲内のticksをフィルタリング
-  const filteredTicks = ticks.filter(
-    (tick) => tick.tickIdx >= tickLower && tick.tickIdx <= tickUpper,
-  );
+  const filteredTicks = ticks.filter((tick) => tick.tickIdx >= tickLower && tick.tickIdx <= tickUpper);
 
   // 各Tickの正味の流動性を合計
   return filteredTicks.reduce((sum, tick) => sum + tick.liquidityNet, 0);

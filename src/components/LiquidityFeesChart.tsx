@@ -1,17 +1,57 @@
-import React, { useState } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import React, { useState, useMemo } from 'react';
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  ComposedChart,
+} from 'recharts';
 import { formatUSD, formatNumber } from '../lib/utils';
-import { ChartDataPoint } from '../types';
+import { ExtendedChartDataPoint } from '@/types';
 
-interface LiquidityFeesChartProps {
-  data: ChartDataPoint[];
+export interface LiquidityFeesChartProps {
+  /** チャートに表示するデータポイント配列 */
+  data: ExtendedChartDataPoint[];
+  /** Token0のシンボル */
   token0Symbol: string;
+  /** Token1のシンボル */
   token1Symbol: string;
+  /** 時間範囲 (90d) */
   timeRange: string;
-  onTimeRangeChange: (range: string) => void;
+  /** 時間範囲変更ハンドラ - 90dのみ使用なので実際は使用しない */
+  onTimeRangeChange?: (range: string) => void;
+  /** プールの手数料率 (例: '3000' = 0.3%) */
   feeTier?: string;
+  /** データがロード中かどうか */
+  loading?: boolean;
 }
 
+interface TooltipPayloadItem {
+  dataKey: string;
+  name: string;
+  value: number;
+  color: string;
+  payload: {
+    [key: string]: any;
+  };
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: TooltipPayloadItem[];
+  label?: number | string;
+}
+
+/**
+ * 流動性と手数料のチャートを表示するコンポーネント
+ * 大量データの効率的な処理に対応
+ */
 const LiquidityFeesChart: React.FC<LiquidityFeesChartProps> = ({
   data,
   token0Symbol,
@@ -19,56 +59,73 @@ const LiquidityFeesChart: React.FC<LiquidityFeesChartProps> = ({
   timeRange,
   onTimeRangeChange,
   feeTier,
+  loading = false,
 }) => {
   const [activeDataKeys, setActiveDataKeys] = useState<{
     tvlUSD: boolean;
-    feesUSD: boolean;
+    dailyFeeUSD: boolean;
   }>({
     tvlUSD: true,
-    feesUSD: true,
+    dailyFeeUSD: true,
   });
 
-  // Format dates for x-axis
+  // データを効率的に処理
+  const processedData = useMemo(() => {
+    if (!data || data.length === 0) return [];
+
+    // データ量が多い場合は間引く処理（例: 90日を超えるデータの場合）
+    if (data.length > 90) {
+      const dataLength = data.length;
+      const skipFactor = Math.floor(dataLength / 90);
+
+      if (skipFactor > 1) {
+        return data.filter((_, index) => index % skipFactor === 0);
+      }
+    }
+
+    return data;
+  }, [data]);
+
+  // X軸のフォーマット関数
   const formatXAxis = (timestamp: number) => {
     const date = new Date(timestamp * 1000);
-
-    if (timeRange === '24h') {
-      return date.toLocaleTimeString('ja-JP', {
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } else if (timeRange === '90d') {
-      return `${date.getMonth() + 1}/${date.getDate()}`;
-    } else {
-      return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}`;
-    }
+    return `${date.getMonth() + 1}/${date.getDate()}`;
   };
 
-  // Custom tooltip component
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  // カスタムツールチップコンポーネント
+  const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
-      const date = new Date(label * 1000);
+      const date = new Date(Number(label) * 1000);
       const formattedDate = date.toLocaleDateString('ja-JP', {
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
       });
 
       return (
         <div className='bg-white p-3 border border-gray-200 shadow-lg rounded'>
           <p className='text-sm text-gray-600 mb-2'>{formattedDate}</p>
-          {payload.map((entry: any, index: number) => {
+          {payload.map((entry, index) => {
             // Skip rendering if value is 0
             if (entry.value === 0) return null;
 
-            let formattedValue = entry.value;
-            if (entry.dataKey === 'tvlUSD' || entry.dataKey === 'feesUSD') {
-              formattedValue = formatUSD(entry.value);
-            }
-
+            // 値のフォーマット
+            let formattedValue: string;
             let label = entry.name;
+
+            if (entry.dataKey === 'tvlUSD') {
+              formattedValue = formatUSD(entry.value);
+              label = '総流動性 (USD)';
+            } else if (entry.dataKey === 'dailyFeeUSD') {
+              formattedValue = formatUSD(entry.value);
+              label = '日次手数料 (USD)';
+            } else if (entry.dataKey === 'liquidity') {
+              // 流動性値は既に10^6単位でスケーリングされている
+              formattedValue = `${formatNumber(entry.value)}M`;
+              label = '流動性';
+            } else {
+              formattedValue = entry.value.toString();
+            }
 
             return (
               <p key={`tooltip-${index}`} style={{ color: entry.color }} className='text-sm'>
@@ -83,6 +140,7 @@ const LiquidityFeesChart: React.FC<LiquidityFeesChartProps> = ({
     return null;
   };
 
+  // データキーのトグル処理
   const toggleDataKey = (key: keyof typeof activeDataKeys) => {
     setActiveDataKeys({
       ...activeDataKeys,
@@ -90,28 +148,102 @@ const LiquidityFeesChart: React.FC<LiquidityFeesChartProps> = ({
     });
   };
 
+  // 遅延計算を使用して統計値を計算 (パフォーマンス最適化)
+  const stats = useMemo(() => {
+    if (!processedData || processedData.length === 0) {
+      return {
+        totalFees: 0,
+        currentTvl: 0,
+        currentLiq: 0,
+        averageFee: 0,
+        estimatedAnnualFees: 0,
+        feeAPR: 0,
+        liquidityChange: 0,
+        liquidityChangePercent: 0,
+      };
+    }
+
+    // 手数料の合計を計算
+    const totalFees = processedData.reduce((sum, item) => sum + (item.dailyFeeUSD || 0), 0);
+
+    // 直近のデータポイントから現在の流動性を取得
+    const currentTvl = processedData[processedData.length - 1].tvlUSD || 0;
+    const currentLiq = processedData[processedData.length - 1].liquidity || 0;
+
+    // 平均手数料を計算
+    const averageFee = processedData.length > 0 ? totalFees / processedData.length : 0;
+
+    // 年間の概算APR (Annual Percentage Rate)を計算
+    const estimatedAnnualFees = averageFee * 365;
+    const feeAPR = currentTvl > 0 ? (estimatedAnnualFees / currentTvl) * 100 : 0;
+
+    // 流動性の変化を計算
+    const initialTvl = processedData[0]?.tvlUSD || 0;
+    const liquidityChange = currentTvl - initialTvl;
+    const liquidityChangePercent = initialTvl > 0 ? (currentTvl / initialTvl - 1) * 100 : 0;
+
+    return {
+      totalFees,
+      currentTvl,
+      currentLiq,
+      averageFee,
+      estimatedAnnualFees,
+      feeAPR,
+      liquidityChange,
+      liquidityChangePercent,
+    };
+  }, [processedData]);
+
+  // 手数料率を正確に計算 (例: 3000 -> 0.3%)
+  const feeRatePercentage = feeTier ? Number(feeTier) / 10000 : 0;
+
+  // Y軸のフォーマッター
+  const rightAxisFormatter = (value: number) => {
+    return `$${(value / 1000).toFixed(0)}K`;
+  };
+
+  // 左軸のフォーマッター (流動性値用)
+  const leftAxisFormatter = (value: number) => {
+    // 流動性は百万単位 (M) で表示
+    return `$${(value / 1000000).toFixed(1)}M`;
+  };
+
+  // ローディング状態の表示
+  if (loading) {
+    return (
+      <div className='card'>
+        <div className='card-header flex justify-between items-center mb-4'>
+          <h2 className='card-title mb-0'>流動性・手数料推移 (90日間)</h2>
+        </div>
+        <div className='card-body'>
+          <div className='flex items-center justify-center' style={{ height: '400px' }}>
+            <div className='text-gray-500'>データを読み込み中...</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // データがない場合の表示
+  if (!processedData || processedData.length === 0) {
+    return (
+      <div className='card'>
+        <div className='card-header flex justify-between items-center mb-4'>
+          <h2 className='card-title mb-0'>流動性・手数料推移 (90日間)</h2>
+        </div>
+        <div className='card-body'>
+          <div className='flex items-center justify-center' style={{ height: '400px' }}>
+            <div className='text-gray-500'>データがありません</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className='card'>
       <div className='card-header flex justify-between items-center mb-4'>
-        <h2 className='card-title mb-0'>流動性・手数料推移</h2>
-        <div className='flex space-x-2'>
-          <button
-            onClick={() => onTimeRangeChange('24h')}
-            className={`px-3 py-1 rounded text-sm ${
-              timeRange === '24h' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-          >
-            24時間
-          </button>
-          <button
-            onClick={() => onTimeRangeChange('90d')}
-            className={`px-3 py-1 rounded text-sm ${
-              timeRange === '90d' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-          >
-            90日間
-          </button>
-        </div>
+        <h2 className='card-title mb-0'>流動性・手数料推移 (90日間)</h2>
       </div>
 
       <div className='card-body'>
@@ -127,19 +259,19 @@ const LiquidityFeesChart: React.FC<LiquidityFeesChartProps> = ({
           </div>
           <div
             className={`cursor-pointer flex items-center px-2 py-1 rounded ${
-              activeDataKeys.feesUSD ? 'bg-green-100 border border-green-300' : 'opacity-50 hover:bg-gray-100'
+              activeDataKeys.dailyFeeUSD ? 'bg-green-100 border border-green-300' : 'opacity-50 hover:bg-gray-100'
             }`}
-            onClick={() => toggleDataKey('feesUSD')}
+            onClick={() => toggleDataKey('dailyFeeUSD')}
           >
             <div className='w-3 h-3 rounded-full bg-green-500 mr-1'></div>
-            <span className='text-sm'>手数料収入 (USD)</span>
+            <span className='text-sm'>日次手数料 (USD)</span>
           </div>
         </div>
 
         <div style={{ width: '100%', height: 400 }}>
           <ResponsiveContainer width='100%' height='100%'>
-            <LineChart
-              data={data}
+            <ComposedChart
+              data={processedData}
               margin={{
                 top: 5,
                 right: 30,
@@ -160,7 +292,7 @@ const LiquidityFeesChart: React.FC<LiquidityFeesChartProps> = ({
               <YAxis
                 yAxisId='left'
                 orientation='left'
-                tickFormatter={(value) => `$${(value / 1000000).toFixed(1)}M`}
+                tickFormatter={leftAxisFormatter}
                 domain={['auto', 'auto']}
                 label={{
                   value: '総流動性 (USD)',
@@ -174,9 +306,9 @@ const LiquidityFeesChart: React.FC<LiquidityFeesChartProps> = ({
                 yAxisId='right'
                 orientation='right'
                 domain={['auto', 'auto']}
-                tickFormatter={(value) => `$${(value / 1000).toFixed(0)}K`}
+                tickFormatter={rightAxisFormatter}
                 label={{
-                  value: '手数料 (USD)',
+                  value: '日次手数料 (USD)',
                   angle: 90,
                   position: 'insideRight',
                   style: { textAnchor: 'middle', fontSize: 12 },
@@ -199,20 +331,17 @@ const LiquidityFeesChart: React.FC<LiquidityFeesChartProps> = ({
                 />
               )}
 
-              {activeDataKeys.feesUSD && (
-                <Line
+              {activeDataKeys.dailyFeeUSD && (
+                <Bar
                   yAxisId='right'
-                  type='monotone'
-                  dataKey='feesUSD'
-                  name='手数料収入 (USD)'
-                  stroke='#10B981'
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 6 }}
+                  dataKey='dailyFeeUSD'
+                  name='日次手数料 (USD)'
+                  fill='#10B981'
                   isAnimationActive={false}
+                  barSize={4}
                 />
               )}
-            </LineChart>
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
 
@@ -225,36 +354,38 @@ const LiquidityFeesChart: React.FC<LiquidityFeesChartProps> = ({
                   <span className='font-medium'>トークンペア:</span> {token0Symbol} / {token1Symbol}
                 </p>
                 <p>
-                  <span className='font-medium'>総流動性:</span>{' '}
-                  {data.length > 0 ? formatUSD(data[data.length - 1]?.tvlUSD || 0) : 'N/A'}
+                  <span className='font-medium'>総流動性 (USD):</span> {formatUSD(stats.currentTvl)}
                 </p>
                 <p>
-                  <span className='font-medium'>累積手数料:</span>{' '}
-                  {data.length > 0 ? formatUSD(data[data.length - 1]?.feesUSD || 0) : 'N/A'}
+                  <span className='font-medium'>流動性:</span> {formatNumber(stats.currentLiq) + 'M'}
+                </p>
+                <p>
+                  <span className='font-medium'>期間内総手数料:</span> {formatUSD(stats.totalFees)}
                 </p>
                 {feeTier && (
                   <p>
-                    <span className='font-medium'>手数料率:</span> {Number(feeTier) / 10000}%
+                    <span className='font-medium'>手数料率:</span> {feeRatePercentage}%
                   </p>
                 )}
               </div>
             </div>
             <div className='bg-gray-50 p-4 rounded-md'>
-              <h3 className='text-sm font-medium text-gray-700 mb-2'>期間内の変化</h3>
+              <h3 className='text-sm font-medium text-gray-700 mb-2'>収益分析</h3>
               <div className='text-sm'>
-                {data.length > 1 && (
+                {processedData.length > 1 && (
                   <>
                     <p>
-                      <span className='font-medium'>流動性変化:</span>{' '}
-                      {formatUSD((data[data.length - 1]?.tvlUSD || 0) - (data[0]?.tvlUSD || 0))} (
-                      {(data[0]?.tvlUSD || 0) > 0
-                        ? (((data[data.length - 1]?.tvlUSD || 0) / (data[0]?.tvlUSD || 1) - 1) * 100).toFixed(2)
-                        : '0.00'}
-                      %)
+                      <span className='font-medium'>平均日次手数料:</span> {formatUSD(stats.averageFee)}
                     </p>
                     <p>
-                      <span className='font-medium'>手数料獲得:</span>{' '}
-                      {formatUSD((data[data.length - 1]?.feesUSD || 0) - (data[0]?.feesUSD || 0))}
+                      <span className='font-medium'>年間手数料推定:</span> {formatUSD(stats.estimatedAnnualFees)}
+                    </p>
+                    <p>
+                      <span className='font-medium'>推定年率 (APR):</span> {stats.feeAPR.toFixed(2)}%
+                    </p>
+                    <p>
+                      <span className='font-medium'>流動性変化:</span> {formatUSD(stats.liquidityChange)} (
+                      {stats.liquidityChangePercent.toFixed(2)}%)
                     </p>
                   </>
                 )}

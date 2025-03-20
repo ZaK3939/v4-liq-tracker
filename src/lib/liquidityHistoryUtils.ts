@@ -1,118 +1,132 @@
 import { useMemo } from 'react';
-import { ChartDataPoint, ModifyLiquidityEvent, SwapEvent, Pool } from '../types';
+import { calculateDailyFees, DailyFeeData } from './feesProcessor';
+import { processEventsIntoMap } from './eventsProcessor';
+import { ModifyLiquidityEvent, SwapEvent, Pool, ExtendedChartDataPoint, LiquidityDataPoint } from '@/types';
 
 /**
- * 流動性イベントから時系列チャートデータを生成する関数
+ * 流動性と手数料のデータを処理するカスタムフック
+ * GraphQLスキーマに合わせて型を正確に扱う
  *
- * 流動性の変動と手数料の推移を追跡します
+ * @param liquidityEvents 流動性変更イベントの配列
+ * @param swapEvents スワップイベントの配列
+ * @param poolData プールデータ
+ * @param timeRange 時間範囲 (現在は90日固定)
+ * @returns 集約されたチャートデータの配列
  */
 export function useLiquidityHistory(
   liquidityEvents: ModifyLiquidityEvent[] | undefined,
   swapEvents: SwapEvent[] | undefined,
-  poolDetails: Pool | undefined,
-  timeRange: string,
-): ChartDataPoint[] {
+  poolData: Pool | undefined,
+  timeRange: string = '90d', // 現在は90日固定
+): ExtendedChartDataPoint[] {
   return useMemo(() => {
-    if (!poolDetails) return [];
+    if (!liquidityEvents || !swapEvents || !poolData) return [];
 
-    // 初期値を設定
-    const initialLiquidity = poolDetails.liquidity ? BigInt(poolDetails.liquidity) : BigInt(0);
-    const initialTVL = 0;
-    const initialToken0 = parseFloat(poolDetails.totalValueLockedToken0 || '0');
-    const initialToken1 = parseFloat(poolDetails.totalValueLockedToken1 || '0');
-    const initialFees = 0;
+    // 時系列順にイベントをソート
+    const sortedLiquidityEvents = [...liquidityEvents].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
 
-    // 流動性イベントとスワップイベントをソート
-    const sortedLiquidityEvents = liquidityEvents
-      ? [...liquidityEvents].sort((a, b) => parseInt(a.timestamp) - parseInt(b.timestamp))
-      : [];
+    // 時系列順にスワップイベントをソート
+    const sortedSwapEvents = [...swapEvents].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
 
-    const sortedSwapEvents = swapEvents
-      ? [...swapEvents].sort((a, b) => parseInt(a.timestamp) - parseInt(b.timestamp))
-      : [];
+    // GraphQLスキーマに合わせた流動性イベント処理
+    const dateMap = processEventsIntoMap(sortedLiquidityEvents, sortedSwapEvents, poolData);
 
-    // 時間間隔を決定
-    let interval = 3600; // デフォルト: 1時間ごと
-    if (timeRange === '24h') interval = 900; // 15分ごと
-    else if (timeRange === '90d') interval = 86400; // 1日ごと
+    // 日付でソートした配列に変換
+    const sortedDataPoints = Array.from(dateMap.values()).sort((a, b) => a.timestamp - b.timestamp);
 
-    // 時間範囲の開始時間を決定
-    const now = Math.floor(Date.now() / 1000);
-    let startTime = now;
-    if (timeRange === '24h') startTime = now - 86400;
-    else if (timeRange === '90d') startTime = now - 86400 * 90;
+    // 日別の手数料データを計算
+    const dailyFees = calculateDailyFees(sortedSwapEvents, poolData.feeTier);
 
-    // タイムスタンプの取得: 開始時間から現在までの間隔ごとに
-    const timestamps: number[] = [];
-    for (let t = startTime; t <= now; t += interval) {
-      timestamps.push(t);
-    }
+    // 日別のデータポイントを結合
+    const dailyDataPoints = combineDataWithFees(sortedDataPoints, dailyFees);
 
-    // 各タイムスタンプでの状態を再構築
-    const chartData: ChartDataPoint[] = timestamps.map((timestamp) => {
-      // このタイムスタンプ以前のイベントを全て取得
-      const liquidityEventsUntilTimestamp = sortedLiquidityEvents.filter((e) => parseInt(e.timestamp) <= timestamp);
+    // 日付が抜けている場合は補完する
+    const completeDataPoints = fillMissingDates(dailyDataPoints);
 
-      const swapEventsUntilTimestamp = sortedSwapEvents.filter((e) => parseInt(e.timestamp) <= timestamp);
+    return completeDataPoints;
+  }, [liquidityEvents, swapEvents, poolData, timeRange]);
+}
 
-      // 流動性と価値の計算
-      let runningLiquidity = Number(initialLiquidity);
-      let runningTVL = 0;
-      let runningToken0 = initialToken0;
-      let runningToken1 = initialToken1;
-      let runningFees = initialFees;
+/**
+ * データポイントに手数料情報を結合する関数
+ * @param dataPoints 元のデータポイント配列
+ * @param feesData 手数料データ配列
+ * @returns 手数料情報が追加されたデータポイント配列
+ */
+function combineDataWithFees(dataPoints: LiquidityDataPoint[], feesData: DailyFeeData[]): ExtendedChartDataPoint[] {
+  return dataPoints.map((dataPoint) => {
+    const matchingFee = feesData.find((fee) => fee.timestamp === dataPoint.timestamp);
+    return {
+      ...dataPoint,
+      dailyFeeUSD: matchingFee ? matchingFee.feeUSD : 0,
+      volumeUSD: matchingFee ? matchingFee.volumeUSD : 0,
+      swapCount: matchingFee ? matchingFee.count : 0,
+    };
+  });
+}
 
-      // 流動性の変動を計算
-      liquidityEventsUntilTimestamp.forEach((event) => {
-        // liquidityDeltaを使って流動性を更新
-        const delta = Number(event.liquidityDelta || 0);
-        runningLiquidity += delta;
+/**
+ * 日付が抜けているデータポイントを補完する関数
+ * @param dataPoints 元のデータポイント配列
+ * @returns 補完されたデータポイント配列
+ */
+function fillMissingDates(dataPoints: ExtendedChartDataPoint[]): ExtendedChartDataPoint[] {
+  if (!dataPoints || dataPoints.length === 0) return [];
 
-        // token0とtoken1の量を更新
-        const amount0 = parseFloat(event.amount0 || '0');
-        const amount1 = parseFloat(event.amount1 || '0');
-        runningToken0 += amount0;
-        runningToken1 += amount1;
+  const filledData: ExtendedChartDataPoint[] = [...dataPoints];
+  const startDate = new Date(dataPoints[0].timestamp * 1000);
+  const endDate = new Date(dataPoints[dataPoints.length - 1].timestamp * 1000);
 
-        // TVLを更新
-        const amountUSD = parseFloat(event.amountUSD || '0');
-        runningTVL += amountUSD;
-      });
+  // 日付をループして抜けている日を埋める
+  const currentDate = new Date(startDate);
+  currentDate.setHours(0, 0, 0, 0);
 
-      // 手数料の累積を計算
-      let feesSinceStart = 0;
-      swapEventsUntilTimestamp.forEach((event) => {
-        const amountUSD = parseFloat(event.amountUSD || '0');
-        // 手数料率に基づいて手数料を計算
-        const feePercentage = Number(poolDetails.feeTier) / 1000000; // feeTierは100%を1,000,000として表現
-        const feeAmount = amountUSD * feePercentage;
-        feesSinceStart += feeAmount;
-      });
-
-      // 初期の手数料に期間内の手数料を加算
-      runningFees += feesSinceStart;
-
-      // 最も近いスワップイベントを使用して価格とティックを取得
-      const lastSwap = swapEventsUntilTimestamp[swapEventsUntilTimestamp.length - 1];
-      const sqrtPrice = lastSwap ? lastSwap.sqrtPriceX96 : poolDetails.sqrtPrice;
-      const tick = lastSwap ? parseInt(lastSwap.tick || poolDetails.tick) : parseInt(poolDetails.tick);
-
-      // データポイントを作成
-      const point: ChartDataPoint = {
-        date: new Date(timestamp * 1000),
-        timestamp,
-        tvlUSD: runningTVL,
-        liquidity: runningLiquidity,
-        token0Amount: runningToken0,
-        token1Amount: runningToken1,
-        sqrtPrice: Number(sqrtPrice),
-        tick,
-        feesUSD: runningFees,
-      };
-
-      return point;
+  while (currentDate <= endDate) {
+    const currentTimestamp = Math.floor(currentDate.getTime() / 1000);
+    const dateExists = filledData.some((point) => {
+      const pointDate = new Date(point.timestamp * 1000);
+      return (
+        pointDate.getFullYear() === currentDate.getFullYear() &&
+        pointDate.getMonth() === currentDate.getMonth() &&
+        pointDate.getDate() === currentDate.getDate()
+      );
     });
 
-    return chartData;
-  }, [liquidityEvents, swapEvents, poolDetails, timeRange]);
+    if (!dateExists) {
+      // 前日のデータをコピーして流動性を維持
+      const previousDay = new Date(currentDate);
+      previousDay.setDate(previousDay.getDate() - 1);
+
+      const previousData = filledData.find((point) => {
+        const pointDate = new Date(point.timestamp * 1000);
+        return (
+          pointDate.getFullYear() === previousDay.getFullYear() &&
+          pointDate.getMonth() === previousDay.getMonth() &&
+          pointDate.getDate() === previousDay.getDate()
+        );
+      });
+
+      if (previousData) {
+        filledData.push({
+          date: new Date(currentDate),
+          timestamp: currentTimestamp,
+          liquidity: previousData.liquidity,
+          tvlUSD: previousData.tvlUSD,
+          token0Amount: previousData.token0Amount,
+          token1Amount: previousData.token1Amount,
+          tick: previousData.tick,
+          sqrtPrice: previousData.sqrtPrice,
+          dailyFeeUSD: 0, // その日の手数料はゼロ
+          volumeUSD: 0,
+          swapCount: 0,
+        });
+      }
+    }
+
+    // 次の日に進む
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  // タイムスタンプでソート
+  return filledData.sort((a, b) => a.timestamp - b.timestamp);
 }

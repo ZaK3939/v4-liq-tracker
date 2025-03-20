@@ -203,3 +203,142 @@ export interface BundleQueryResult {
     ethPriceUSD: string;
   };
 }
+
+export interface ChartDataPoint {
+  /** 日付オブジェクト */
+  date: Date;
+  /** Unix タイムスタンプ (秒単位) */
+  timestamp: number;
+  /** 総流動性額 (USD) */
+  tvlUSD: number;
+  /** プールの流動性 - 数値型に変更 */
+  liquidity: number;
+  /** トークン0の量 */
+  token0Amount: number;
+  /** トークン1の量 */
+  token1Amount: number;
+  /** 平方根価格 - 数値型に変更 */
+  sqrtPrice: number;
+  /** 現在の価格ティック - 数値型に変更 */
+  tick: number;
+}
+
+// 日別の集計データ
+export interface AggregatedDataPoint extends ExtendedChartDataPoint {
+  /** 集計期間の種類 ('day', 'week', 'month') */
+  periodType?: string;
+}
+
+// 時間別の集計データ
+export interface HourlyDataPoint extends ExtendedChartDataPoint {
+  /** 時間帯 (0-23) */
+  hour: number;
+}
+
+/**
+ * 基本的なチャートデータポイント
+ */
+export interface LiquidityDataPoint {
+  /** 日付オブジェクト */
+  date: Date;
+  /** Unix タイムスタンプ (秒単位) */
+  timestamp: number;
+  /** 流動性額 */
+  liquidity: number;
+  /** 総流動性額 (USD) */
+  tvlUSD: number;
+  /** トークン0の量 */
+  token0Amount: number;
+  /** トークン1の量 */
+  token1Amount: number;
+  /** 現在の価格ティック */
+  tick: number;
+  /** 平方根価格 */
+  sqrtPrice: number;
+}
+// types/index.ts に追加する型定義
+
+/**
+ * チャートの基本データポイント
+ */
+export interface ChartDataPoint {
+  /** 日付オブジェクト */
+  date: Date;
+  /** Unix タイムスタンプ (秒単位) */
+  timestamp: number;
+  /** 総流動性額 (USD) */
+  tvlUSD: number;
+  /** 流動性額 */
+  liquidity: number;
+  /** トークン0の量 */
+  token0Amount: number;
+  /** トークン1の量 */
+  token1Amount: number;
+  /** 現在の価格ティック */
+  tick: number;
+  /** 平方根価格 */
+  sqrtPrice: number;
+}
+
+/**
+ * 拡張されたチャートデータポイント（手数料情報付き）
+ */
+export interface ExtendedChartDataPoint extends ChartDataPoint {
+  /** 日次/時間ごとの手数料 (USD) */
+  dailyFeeUSD: number;
+  /** 日次/時間ごとの取引量 (USD) */
+  volumeUSD: number;
+  /** 日次/時間ごとのスワップ数 */
+  swapCount: number;
+}
+
+/**
+ * 流動性データポイント（リファクタリング用）
+ */
+export interface LiquidityDataPoint {
+  /** 日付オブジェクト */
+  date: Date;
+  /** Unix タイムスタンプ (秒単位) */
+  timestamp: number;
+  /** 流動性額 */
+  liquidity: number;
+  /** 総流動性額 (USD) */
+  tvlUSD: number;
+  /** トークン0の量 */
+  token0Amount: number;
+  /** トークン1の量 */
+  token1Amount: number;
+  /** 現在の価格ティック */
+  tick: number;
+  /** 平方根価格 */
+  sqrtPrice: number;
+}
+
+/**
+ * 集計されたチャートデータポイント
+ */
+export interface AggregatedChartDataPoint extends ExtendedChartDataPoint {
+  /** 集計期間の種類 ('day', 'week', 'month') */
+  periodType: string;
+}
+
+/**
+ * 日別の手数料データ
+ */
+export interface DailyFeeData {
+  /** 日付オブジェクト */
+  date: Date;
+  /** Unix タイムスタンプ (秒単位) */
+  timestamp: number;
+  /** 日次手数料合計 (USD) */
+  feeUSD: number;
+  /** 日次取引量合計 (USD) */
+  volumeUSD: number;
+  /** 日次スワップ数 */
+  count: number;
+}
+
+/**
+ * 期間タイプの型定義
+ */
+export type PeriodType = 'day' | 'week' | 'month';

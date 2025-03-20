@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
-import { useQuery } from '@apollo/client';
+import { useQuery, useApolloClient } from '@apollo/client';
 import Link from 'next/link';
 import {
   GET_POOL_DETAILS,
@@ -19,6 +19,7 @@ import {
   getTimeRangeTimestamp,
   shortenAddress,
 } from '../../lib/utils';
+import { fetchAllSwapEvents, createChartDataFromSwapEvents } from '../../lib/swapDataFetcher';
 import LiquidityFeesChart from '../../components/LiquidityFeesChart';
 import LiquidityDepthChart from '../../components/LiquidityDepthChart';
 import LiquidityEventsTable from '../../components/LiquidityEventsTable';
@@ -36,15 +37,26 @@ import {
   TicksQueryResult,
   BundleQueryResult,
   ChartDataPoint,
+  SwapEvent,
+  ExtendedChartDataPoint,
 } from '../../types';
 
 export default function PoolDetail() {
   const router = useRouter();
+  const apolloClient = useApolloClient();
   const { id } = router.query;
   const [timeRange, setTimeRange] = useState('90d'); // 90日表示をデフォルトに
   const [activeTab, setActiveTab] = useState('liquidity');
   const [token0Id, setToken0Id] = useState<string | undefined>(undefined);
   const [token1Id, setToken1Id] = useState<string | undefined>(undefined);
+
+  // 大量データ取得のための状態
+  const [isLoadingSwapData, setIsLoadingSwapData] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingMessage, setLoadingMessage] = useState('');
+  const [allSwapEvents, setAllSwapEvents] = useState<SwapEvent[]>([]);
+  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   // プールの詳細データを取得 - 単独のクエリ（TokenInfoは別に取得）
   const {
@@ -111,6 +123,56 @@ export default function PoolDetail() {
   // 時間範囲に基づいたタイムスタンプを取得
   const startTimestamp = useMemo(() => getTimeRangeTimestamp(timeRange), [timeRange]);
 
+  // 大量データを取得する関数 (改良版)
+  const fetchLargeSwapDataset = async () => {
+    if (!id || !poolData?.Pool_by_pk?.feeTier) return;
+
+    setIsLoadingSwapData(true);
+    setDataError(null);
+    setAllSwapEvents([]);
+
+    try {
+      // 進捗報告用コールバック
+      const updateProgress = (percent: number, message: string) => {
+        setLoadingProgress(percent);
+        setLoadingMessage(message);
+      };
+
+      // 大量データ取得（ページネーションを使用）
+      const events = await fetchAllSwapEvents(
+        apolloClient,
+        id as string,
+        startTimestamp,
+        100, // 最大バッチ数（最大10万件）
+        1000, // 1回あたりの取得数
+        updateProgress,
+      );
+
+      setAllSwapEvents(events);
+
+      // チャート用データ形式に変換
+      const chartPoints = createChartDataFromSwapEvents(
+        events,
+        poolData.Pool_by_pk.feeTier,
+        [], // 流動性データは別途取得
+      );
+
+      setChartData(chartPoints);
+    } catch (error) {
+      console.error('大量データ取得エラー:', error);
+      setDataError(`データの取得に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
+    } finally {
+      setIsLoadingSwapData(false);
+    }
+  };
+
+  // 初回マウント時、およびtimeRangeが変わるたびにデータを取得
+  useEffect(() => {
+    if (id && poolData?.Pool_by_pk?.feeTier && activeTab === 'liquidity') {
+      fetchLargeSwapDataset();
+    }
+  }, [id, poolData?.Pool_by_pk?.feeTier, timeRange, activeTab]);
+
   // 流動性イベントを取得
   const {
     loading: liquidityEventsLoading,
@@ -124,11 +186,11 @@ export default function PoolDetail() {
           first: 1000,
         }
       : undefined,
-    skip: !id,
+    skip: !id || isLoadingSwapData, // 大量データ取得中はスキップ
     client,
   });
 
-  // スワップイベントを取得（手数料計算のため）
+  // 既存の小さなスワップイベントクエリ（SwapDetailsTabで表示する用）
   const {
     loading: swapsLoading,
     error: swapsError,
@@ -137,11 +199,11 @@ export default function PoolDetail() {
     variables: id
       ? {
           poolId: id,
-          startTime: startTimestamp,
-          first: 1000,
+          startTime: 0, // すべてのスワップを取得
+          first: 100, // 表示用に最新100件だけ
         }
       : undefined,
-    skip: !id,
+    skip: !id || activeTab !== 'swaps', // スワップタブでのみ実行
     client,
   });
 
@@ -184,13 +246,43 @@ export default function PoolDetail() {
     client,
   });
 
-  // 流動性と手数料のチャートデータを生成
-  const chartData = useLiquidityHistory(
+  // 流動性履歴データを使用してチャートデータを生成（既存のチャートデータと結合）
+  const liquidityHistoryData = useLiquidityHistory(
     liquidityEventsData?.ModifyLiquidity,
-    swapsData?.Swap,
+    [], // スワップデータは大量データ取得で別途処理
     poolData?.Pool_by_pk,
     timeRange,
   );
+
+  // 両方のデータソースを結合（大量データ取得と流動性ヒストリー）
+  const combinedChartData = useMemo(() => {
+    if (isLoadingSwapData) return []; // ロード中は空配列
+
+    // 大量データ取得で生成したデータを優先
+    if (chartData.length > 0) {
+      // 流動性値をliquidityHistoryDataから取得
+      const liquidityDataMap = new Map();
+      liquidityHistoryData.forEach((item) => {
+        liquidityDataMap.set(item.timestamp, {
+          tvlUSD: item.tvlUSD,
+          liquidity: item.liquidity,
+        });
+      });
+
+      // chartDataにliquidityHistoryDataの情報を追加
+      return chartData.map((item) => {
+        const liquidityInfo = liquidityDataMap.get(item.timestamp);
+        return {
+          ...item,
+          tvlUSD: liquidityInfo?.tvlUSD || item.tvlUSD,
+          liquidity: liquidityInfo?.liquidity || item.liquidity,
+        };
+      }) as unknown as ExtendedChartDataPoint[]; // 型をExtendedChartDataPoint[]としてキャスト
+    }
+
+    // 既存のデータを返す
+    return liquidityHistoryData as unknown as ExtendedChartDataPoint[]; // 型をExtendedChartDataPoint[]としてキャスト
+  }, [chartData, liquidityHistoryData, isLoadingSwapData]);
 
   // プールデータがあるか確認
   const pool = poolData?.Pool_by_pk;
@@ -207,7 +299,12 @@ export default function PoolDetail() {
 
   // ローディング状態の確認
   const isLoading = poolLoading || (token0Id && token0Loading) || (token1Id && token1Loading);
-  const isChartLoading = liquidityEventsLoading || swapsLoading;
+  const isChartLoading = isLoadingSwapData || liquidityEventsLoading;
+
+  // 期間選択の変更ハンドラ
+  const handleTimeRangeChange = (range: string) => {
+    setTimeRange(range);
+  };
 
   if (!id || isLoading)
     return (
@@ -380,22 +477,65 @@ export default function PoolDetail() {
           {activeTab === 'liquidity' && (
             <div className='fade-in'>
               {isChartLoading ? (
-                <div className='card p-8 text-center'>
-                  <p className='text-gray-500'>チャートデータを読み込み中...</p>
+                <div className='card p-8'>
+                  <h2 className='text-xl font-bold mb-4'>データを読み込み中...</h2>
+                  <div className='w-full bg-gray-200 rounded-full h-2.5 mb-2'>
+                    <div
+                      className='bg-blue-600 h-2.5 rounded-full transition-all duration-300'
+                      style={{ width: `${loadingProgress}%` }}
+                    ></div>
+                  </div>
+                  <p className='text-sm text-gray-600'>{loadingMessage}</p>
+                  <p className='mt-4 text-sm text-gray-500'>
+                    {timeRange === '90d'
+                      ? '過去3ヶ月分のデータを取得しています。この処理には時間がかかる場合があります。'
+                      : '過去のデータを取得しています。'}
+                  </p>
                 </div>
-              ) : liquidityEventsError || swapsError ? (
+              ) : dataError || liquidityEventsError ? (
                 <div className='card p-8 text-center'>
-                  <p className='text-red-500'>エラーが発生しました: {(liquidityEventsError || swapsError)?.message}</p>
+                  <p className='text-red-500'>エラーが発生しました: {dataError || liquidityEventsError?.message}</p>
+                  <button
+                    className='mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700'
+                    onClick={() => fetchLargeSwapDataset()}
+                  >
+                    再試行
+                  </button>
                 </div>
-              ) : chartData.length > 0 ? (
-                <LiquidityFeesChart
-                  data={chartData}
-                  token0Symbol={token0Symbol}
-                  token1Symbol={token1Symbol}
-                  timeRange={timeRange}
-                  onTimeRangeChange={setTimeRange}
-                  feeTier={pool.feeTier}
-                />
+              ) : combinedChartData.length > 0 ? (
+                <>
+                  {/* データ情報 */}
+                  {allSwapEvents.length > 0 && (
+                    <div className='mb-4 p-3 bg-blue-50 rounded-md'>
+                      <div className='text-sm text-blue-800'>
+                        <span className='font-medium'>処理済みデータ: </span>
+                        <span>{allSwapEvents.length.toLocaleString()}件のスワップイベント</span>
+                        <span className='mx-2'>|</span>
+                        <span>{combinedChartData.length}日分のデータ</span>
+                        <span className='mx-2'>|</span>
+                        <span className='font-medium'>期間: </span>
+                        <span>
+                          {combinedChartData.length > 0
+                            ? `${new Date(combinedChartData[0].timestamp * 1000).toLocaleDateString(
+                                'ja-JP',
+                              )} ~ ${new Date(
+                                combinedChartData[combinedChartData.length - 1].timestamp * 1000,
+                              ).toLocaleDateString('ja-JP')}`
+                            : '利用可能なデータなし'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  <LiquidityFeesChart
+                    data={combinedChartData}
+                    token0Symbol={token0Symbol}
+                    token1Symbol={token1Symbol}
+                    timeRange={timeRange}
+                    onTimeRangeChange={handleTimeRangeChange}
+                    feeTier={pool.feeTier}
+                  />
+                </>
               ) : (
                 <div className='card p-8 text-center'>
                   <p className='text-gray-500'>選択した期間のデータがありません</p>
@@ -487,15 +627,35 @@ export default function PoolDetail() {
           {/* スワップ */}
           {activeTab === 'swaps' && (
             <div className='card fade-in'>
-              <SwapDetailsTable
-                swaps={swapsData?.Swap || []}
-                token0Symbol={token0Symbol}
-                token1Symbol={token1Symbol}
-                feeTier={pool.feeTier}
-                loading={swapsLoading}
-                error={swapsError}
-                networkName='Ethereum'
-              />
+              {allSwapEvents.length > 0 ? (
+                <>
+                  <div className='mb-4 p-3 bg-blue-50 rounded-md'>
+                    <div className='text-sm text-blue-800'>
+                      <span className='font-medium'>スワップ取引データ: </span>
+                      <span>全{allSwapEvents.length.toLocaleString()}件 （直近100件のみ表示）</span>
+                    </div>
+                  </div>
+                  <SwapDetailsTable
+                    swaps={allSwapEvents.slice(0, 100)}
+                    token0Symbol={token0Symbol}
+                    token1Symbol={token1Symbol}
+                    feeTier={pool.feeTier}
+                    loading={false}
+                    error={null}
+                    networkName='Ethereum'
+                  />
+                </>
+              ) : (
+                <SwapDetailsTable
+                  swaps={swapsData?.Swap || []}
+                  token0Symbol={token0Symbol}
+                  token1Symbol={token1Symbol}
+                  feeTier={pool.feeTier}
+                  loading={swapsLoading}
+                  error={swapsError}
+                  networkName='Ethereum'
+                />
+              )}
             </div>
           )}
         </div>
